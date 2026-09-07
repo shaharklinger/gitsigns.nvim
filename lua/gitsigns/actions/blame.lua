@@ -15,6 +15,8 @@ local hash_colors = {} --- @type table<integer,string>
 local ns = api.nvim_create_namespace('gitsigns_blame_win')
 local ns_hl = api.nvim_create_namespace('gitsigns_blame_win_hl')
 
+vim.api.nvim_set_hl(0, 'GitSignsCursorLine', { bg = '#1f434d' })
+
 --- Convert a hex char to a rgb color component
 ---
 --- Taken from vim-fugitive:
@@ -384,9 +386,9 @@ local function on_cursor_moved(bufnr, blm_win, blame, commit_lines, commit_summa
   local cur_sha = assert(blame[lnum]).commit.abbrev_sha
   for i, info in pairs(blame) do
     if info.commit.abbrev_sha == cur_sha then
-      hl_line(blm_bufnr, ns_hl, i, 'CursorLine')
+      hl_line(blm_bufnr, ns_hl, i, 'GitSignsCursorLine')
       hl_line(blm_bufnr, ns_hl, i, '@markup.strong')
-      hl_line(bufnr, ns_hl, i, 'CursorLine')
+      hl_line(bufnr, ns_hl, i, 'GitSignsCursorLine')
     end
   end
 
