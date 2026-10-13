@@ -129,13 +129,13 @@ Deep buffer integration for Git
 <details>
   <summary><strong>Show different revisions of buffers</strong></summary>
 
-  - Use `:Gitsigns show <REVISION>` to `:edit` the current buffer at `<REVISION>`
+  - Use `:Gitsigns show <REVISION>:%` to `:edit` the current buffer at `<REVISION>`
 
 </details>
 
 ## 📋 Requirements
 
-- Neovim >= 0.9.0
+- Neovim >= 0.11.0
 
 > [!TIP]
 > If your version of Neovim is too old, then you can use a past [release].

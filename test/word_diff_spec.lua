@@ -22,12 +22,6 @@ local function refresh_paths()
   test_file = helpers.test_file
 end
 
-local function require_window_scoped_deleted_preview()
-  if helpers.fn.has('nvim-0.11') == 0 then
-    pending('requires window-scoped deleted preview support')
-  end
-end
-
 local function virt_hl_at_col(vline, col)
   local byte_col = 0
   for _, chunk in ipairs(vline) do
@@ -171,9 +165,6 @@ describe('inline preview', function()
   end)
 
   it('word diff aligns highlights after multibyte characters', function()
-    if helpers.fn.has('nvim-0.11') == 0 then
-      pending('requires Neovim 0.11+')
-    end
     setup_test_repo({ test_file_text = { 'unchanged', 'éx' } })
     local config = vim.deepcopy(test_config)
     config.word_diff = true
@@ -536,8 +527,6 @@ describe('inline preview', function()
   end)
 
   it('scopes inline preview rendering to the active window', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'alpha',
@@ -1031,17 +1020,11 @@ describe('popup preview', function()
         'd',
       },
     })
+    -- Stage before attaching, since Git watching is disabled.
+    helpers.write_to_file(test_file, { 'a', 'b', 'C', 'd' })
+    git('add', test_file)
     setup_gitsigns(test_config)
     edit(test_file)
-
-    exec_lua(function()
-      vim.api.nvim_buf_set_lines(0, 2, 3, false, { 'C' })
-      vim.cmd('write')
-    end)
-    git('add', test_file)
-    exec_lua(function()
-      require('gitsigns').refresh()
-    end)
 
     expectf(function()
       local staged = exec_lua(function()
@@ -1082,17 +1065,11 @@ describe('popup preview', function()
         'delta',
       },
     })
+    -- Stage before attaching, since Git watching is disabled.
+    helpers.write_to_file(test_file, { 'alpha', 'BRAVO', 'charlie', 'delta' })
+    git('add', test_file)
     setup_gitsigns(test_config)
     edit(test_file)
-
-    exec_lua(function()
-      vim.api.nvim_buf_set_lines(0, 1, 2, false, { 'BRAVO' })
-      vim.cmd('write')
-    end)
-    git('add', test_file)
-    exec_lua(function()
-      require('gitsigns').refresh()
-    end)
 
     expectf(function()
       local unstaged, staged = exec_lua(function()
@@ -1208,8 +1185,6 @@ describe('show_deleted', function()
   end)
 
   it('prepares deleted preview metadata without eager capture', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'unchanged',
@@ -1255,8 +1230,6 @@ describe('show_deleted', function()
   end)
 
   it('keeps existing deleted lines visible while lazy capture is pending', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'unchanged',
@@ -1365,8 +1338,6 @@ describe('show_deleted', function()
   end)
 
   it('refreshes deleted preview captures when word_diff changes', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'unchanged',
@@ -1404,8 +1375,6 @@ describe('show_deleted', function()
   end)
 
   it('aligns deleted text with signcolumn and relative numbers', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'alpha',
@@ -1515,8 +1484,6 @@ describe('show_deleted', function()
   end)
 
   it('clears deleted preview extmarks when a window switches buffers', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'unchanged',
@@ -1555,8 +1522,6 @@ describe('show_deleted', function()
   end)
 
   it('clears deleted preview extmarks when the buffer becomes clean', function()
-    require_window_scoped_deleted_preview()
-
     setup_test_repo({
       test_file_text = {
         'unchanged',

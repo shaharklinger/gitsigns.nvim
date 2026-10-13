@@ -56,6 +56,10 @@ local function expect_hunks(exp_hunks)
   end)
 end
 
+--- Complete arguments through the user command's completion handler.
+--- @param arglead string
+--- @param line string
+--- @return string[]
 local function complete(arglead, line)
   return exec_lua(function(arglead0, line0)
     return require('gitsigns.cli').complete(arglead0, line0)
@@ -139,7 +143,41 @@ describe('actions', function()
     })
   end)
 
-  it('show_commit does not include ansi color codes', function()
+  for _, cancel in ipairs({ false, true }) do
+    it(
+      'ignores repeated picker callbacks after ' .. (cancel and 'cancellation' or 'selection'),
+      function()
+        local signs_enabled = exec_lua(function(cancel0)
+          local async = require('gitsigns.async')
+          local config = require('gitsigns.config').config
+          local choose --- @type fun(item?: string)
+
+          config.signcolumn = true
+          vim.ui.select = function(_, _, callback)
+            choose = callback
+            return {
+              close = function()
+                error('picker handles must not be closed by async')
+              end,
+            }
+          end
+
+          local task = async.run(require('gitsigns.cli').run, { args = '', fargs = {} })
+          choose(not cancel0 and 'toggle_signs' or nil)
+          task:wait(1000)
+
+          choose('toggle_signs')
+          choose(nil)
+          task:wait(1000)
+
+          return config.signcolumn
+        end, cancel)
+        eq(cancel, signs_enabled)
+      end
+    )
+  end
+
+  it('shows a commit in the current window without ansi color codes', function()
     setup_test_repo()
     edit(test_file)
     check({
@@ -147,17 +185,25 @@ describe('actions', function()
       signs = {},
     })
 
+    local source = api.nvim_get_current_buf()
+    api.nvim_buf_set_lines(source, 0, -1, false, { 'unsaved' })
     local lines = exec_lua(function()
-      local async = require('gitsigns.async')
-      local commit_buf = async
-        .run(function()
-          return require('gitsigns.actions.show_commit')('main', 'edit')
-        end)
-        :wait(1000)
+      local done = false
+      require('gitsigns').show('main', nil, function(err)
+        assert(not err, err)
+        done = true
+      end)
+      assert(vim.wait(1000, function()
+        return done
+      end))
 
-      return vim.api.nvim_buf_get_lines(commit_buf, 0, -1, false)
+      return vim.api.nvim_buf_get_lines(0, 0, -1, false)
     end)
 
+    eq(1, #api.nvim_tabpage_list_wins(0))
+    eq('git', exec_lua('return vim.bo.filetype'))
+    eq(false, exec_lua('return vim.bo.modifiable'))
+    eq({ 'unsaved' }, api.nvim_buf_get_lines(source, 0, -1, false))
     for _, line in ipairs(lines) do
       assert(not line:find('\27', 1, true), ('unexpected ANSI escape in line: %q'):format(line))
     end
@@ -179,7 +225,7 @@ describe('actions', function()
       { '--global=true', '--global=false' },
       complete('--global=', 'Gitsigns change_base main --global=')
     )
-    eq({ '--split=', '--vertical' }, complete('--', 'Gitsigns diffthis --'))
+    eq({ '--split=', '--unified', '--vertical' }, complete('--', 'Gitsigns diffthis --'))
     eq(
       { '--vertical=true', '--vertical=false' },
       complete('--vertical=', 'Gitsigns diffthis --vertical=')
@@ -190,7 +236,11 @@ describe('actions', function()
       '--split=topleft',
       '--split=botright',
     }, complete('--split=', 'Gitsigns diffthis --split='))
-    eq({ 'vsplit', 'tabnew' }, complete('', 'Gitsigns show_commit main '))
+    eq({ '--open=' }, complete('', 'Gitsigns show main '))
+    eq(
+      { '--open=edit', '--open=split', '--open=vsplit', '--open=tabnew' },
+      complete('--open=', 'Gitsigns show main --open=')
+    )
     eq({ 'next' }, complete('n', 'Gitsigns nav_hunk n'))
     eq(
       { '--target=unstaged', '--target=staged', '--target=all' },
@@ -207,6 +257,62 @@ describe('actions', function()
     eq({}, complete('--g', 'Gitsigns reset_hunk --g'))
     eq({ 'attached', 'all' }, complete('', 'Gitsigns setloclist 0 '))
     eq({ 'true', 'false', 'nil' }, complete('', 'Gitsigns toggle_signs '))
+  end)
+
+  it('completes diff revisions and paths', function()
+    setup_test_repo()
+    api.nvim_set_current_dir(scratch)
+    write_to_file(scratch .. '/src/new file%.lua', { 'new' })
+    write_to_file(scratch .. '/--flag', { 'flag' })
+    eq({ 'main' }, complete('ma', 'Gitsigns diff ma'))
+    eq({ '--', '--commit', '--diff=', '--unified' }, complete('--', 'Gitsigns diff --'))
+    eq({ 'main' }, complete('ma', 'Gitsigns diff --commit ma'))
+    eq({ '--', '--diff=', '--unified' }, complete('--', 'Gitsigns diff --commit --'))
+    eq({ '--diff=' }, complete('--d', 'Gitsigns diff --d'))
+    eq(
+      { '--diff=none', '--diff=split', '--diff=unified' },
+      complete('--diff=', 'Gitsigns diff --diff=')
+    )
+    eq({ '--diff=none' }, complete('--diff=n', 'Gitsigns diff --diff=n'))
+    eq({ 'main' }, complete('ma', 'Gitsigns diff --diff=none ma'))
+    eq({ '--', '--commit' }, complete('--', 'Gitsigns diff --diff=none --'))
+    eq({ 'main' }, complete('ma', 'Gitsigns diff --diff=unified ma'))
+    eq({ 'main' }, complete('ma', 'Gitsigns diff --unified ma'))
+    eq(
+      { '--flag', '--', '--commit', '--diff=', '--unified' },
+      complete('--', 'Gitsigns diff HEAD --')
+    )
+    eq({ '--unified' }, complete('--u', 'Gitsigns diff HEAD~ --u'))
+    eq(
+      { '--diff=none', '--diff=split', '--diff=unified' },
+      complete('--diff=', 'Gitsigns diff HEAD~ --diff=')
+    )
+    eq({ '--flag', '--', '--commit' }, complete('--', 'Gitsigns diff HEAD~ --unified --'))
+    eq({}, complete('--u', 'Gitsigns diff HEAD~ -- --u'))
+    eq({ '--flag' }, complete('--f', 'Gitsigns diff -- --f'))
+    local backslash = exec_lua("return vim.fn.has('win32') == 1 and not vim.o.shellslash")
+    local matches = { 'src' .. (backslash and '\\\\' or '/') .. 'new\\ file%.lua' }
+    for _, prefix in ipairs({
+      '-- ',
+      'HEAD ',
+      'HEAD -- --flag ',
+      'HEAD --flag ',
+      '--diff=none -- ',
+      '--diff=none HEAD ',
+      '--diff=unified -- ',
+      '--diff=unified HEAD ',
+      '--unified -- ',
+      '--unified HEAD ',
+      'HEAD~ --diff=none ',
+      'HEAD~ --diff=unified -- ',
+      'HEAD~ --unified ',
+    }) do
+      eq(matches, complete('src/n', 'Gitsigns diff ' .. prefix .. 'src/n'))
+    end
+    eq(matches, complete('src/new\\ f', 'Gitsigns diff -- src/new\\ f'))
+    local args = api.nvim_parse_cmd('Gitsigns ' .. matches[1], {}).args
+    eq(1, #args)
+    helpers.eq_path('src/new file%.lua', args[1])
   end)
 
   it('parses named flag assignments', function()
@@ -579,6 +685,14 @@ describe('actions', function()
       expect_hunks({ '@@ -3,3 +2 @@' })
 
       stage_hunk({ 2, 2 })
+      expect_hunks({})
+    end)
+
+    it('can stage topdelete hunks', function()
+      set_lines(0, 2, {})
+      expect_hunks({ '@@ -1,2 +0 @@' })
+
+      stage_hunk({ 1, 1 })
       expect_hunks({})
     end)
   end)

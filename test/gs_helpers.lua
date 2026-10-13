@@ -10,7 +10,7 @@ local eq = helpers.eq
 local buf_get_var = helpers.api.nvim_buf_get_var
 local system = helpers.fn.system
 local nvim_test_clear = helpers.clear
-local uv = vim.uv or vim.loop ---@diagnostic disable-line: deprecated
+local uv = vim.uv
 
 --- @return boolean
 local function is_win()
@@ -107,6 +107,7 @@ local function local_delete(path)
       error(err, 0)
     end
 
+    -- Wait for delayed Windows handles only when deletion is blocked.
     drain_session_gc(50)
     M.sleep(50)
   end
@@ -329,7 +330,7 @@ function M.cleanup()
       pcall(vim.cmd, 'silent! cd ' .. vim.fn.fnameescape(tmpdir0))
 
       for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-        local name = vim.api.nvim_buf_get_name(buf)
+        local name = vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_get_name(buf) or ''
         if name ~= '' and name:find(root, 1, true) then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
         end
@@ -337,7 +338,8 @@ function M.cleanup()
     end, M.scratch, local_tmpdir())
 
     if is_win() then
-      drain_session_gc(100)
+      -- Collect released handles before the first deletion attempt.
+      drain_session_gc(0)
     end
 
     if not is_win() and M.fn.delete(M.scratch, 'rf') == 0 then
@@ -581,7 +583,7 @@ function M.wait_for_attach(bufnr)
   M.expectf(function()
     return M.exec_lua(function(bufnr0)
       if bufnr0 == vim.NIL then
-        bufnr0 = 0
+        bufnr0 = vim.api.nvim_get_current_buf()
       end
       local cache = require('gitsigns.cache').cache[bufnr0]
       return cache ~= nil

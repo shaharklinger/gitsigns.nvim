@@ -70,7 +70,6 @@ describe('gitsigns (with screen)', function()
       [12] = { foreground = Screen.colors.DodgerBlue, background = Screen.colors.WebGray },
     }
 
-    -- Use the classic vim colorscheme, not the new defaults in nvim >= 0.10
     if fn.has('nvim-0.12') == 0 then
       default_attrs[2].foreground = Screen.colors.NvimDarkCyan
       default_attrs[3].foreground = Screen.colors.NvimDarkGreen
@@ -99,8 +98,6 @@ describe('gitsigns (with screen)', function()
   end)
 
   it('gitdir watcher works on a fresh repo', function()
-    --- @type integer
-    local nvim_ver = exec_lua('return vim.version().minor')
     screen:try_resize(20, 6)
     setup_test_repo({ no_add = true })
     config.watch_gitdir.enable = true
@@ -120,7 +117,7 @@ describe('gitsigns (with screen)', function()
 
     check({
       status = { head = '', added = 18, changed = 0, removed = 0 },
-      signs = { untracked = nvim_ver == 9 and 8 or 7 },
+      signs = { untracked = 7 },
     })
 
     git('add', test_file)
@@ -407,26 +404,6 @@ describe('gitsigns (with screen)', function()
       setup_gitsigns(config)
     end)
 
-    local function stub_notify_once()
-      exec_lua(function()
-        _G.__gitsigns_notify_once_orig = vim.notify_once
-        vim.notify_once = function() end
-      end)
-    end
-
-    local function restore_notify_once()
-      exec_lua(function()
-        if _G.__gitsigns_notify_once_orig then
-          vim.notify_once = _G.__gitsigns_notify_once_orig
-          _G.__gitsigns_notify_once_orig = nil
-        end
-      end)
-    end
-
-    after_each(function()
-      restore_notify_once()
-    end)
-
     local function blame_line_ui_test(autocrlf, file_ending)
       setup_test_repo()
       exec_lua([[vim.g.editorconfig = false]])
@@ -484,11 +461,54 @@ describe('gitsigns (with screen)', function()
       blame_line_ui_test('false', 'unix')
     end)
 
-    it('falls back when function formatters return invalid virt_text', function()
-      -- nvim 0.10.4 can hang screen tests that render notify_once messages.
-      -- This spec only cares about falling back to the default formatter.
-      stub_notify_once()
+    for _, case in ipairs({
+      { revision = ':0', commit = 'HEAD', contents = { 'committed', 'staged' } },
+      { revision = 'HEAD~1', commit = 'HEAD~1', contents = { 'original', 'second' } },
+    }) do
+      it('blames displayed lines in ' .. case.revision .. ' buffers', function()
+        -- Create different first lines in HEAD and HEAD~1.
+        setup_test_repo({ test_file_text = { 'original', 'second' } })
+        write_to_file(test_file, { 'committed', 'second' })
+        git('commit', '-am', 'Change the first line')
 
+        -- Stage the second line, then change both lines in the working file.
+        write_to_file(test_file, { 'committed', 'staged' })
+        git('add', test_file)
+        write_to_file(test_file, { 'unstaged', 'working' })
+
+        -- Open the real revision view and check the displayed contents.
+        edit(test_file)
+        wait_for_attach()
+        command('Gitsigns show ' .. case.revision .. ':%')
+        expectf(function()
+          eq(true, vim.endswith(api.nvim_buf_get_name(0), '//' .. case.revision .. ':dummy.txt'))
+        end)
+        wait_for_attach()
+        eq(case.contents, api.nvim_buf_get_lines(0, 0, -1, false))
+
+        -- Check the commit for the displayed first line.
+        local expected_sha = fn.systemlist({ 'git', '-C', scratch, 'rev-parse', case.commit })[1]
+        expectf(function()
+          local blame = get_buf_var(0, 'gitsigns_blame_line_dict')
+          eq(expected_sha, blame.sha)
+          eq('tester', blame.author)
+          eq(1, blame.final_lnum)
+        end)
+
+        if case.revision == ':0' then
+          -- The staged second line has no commit yet.
+          feed('j')
+          expectf(function()
+            local blame = get_buf_var(0, 'gitsigns_blame_line_dict')
+            eq(2, blame.final_lnum)
+            eq(string.rep('0', 40), blame.sha)
+            eq('Not Committed Yet', blame.author)
+          end)
+        end
+      end)
+    end
+
+    it('falls back when function formatters return invalid virt_text', function()
       exec_lua(function()
         require('gitsigns.config').config.current_line_blame_formatter = function()
           return 'not virt_text'
@@ -1279,21 +1299,12 @@ describe('gitsigns (with screen)', function()
 
     feed('x')
 
-    if fn.has('nvim-0.11') > 0 then
-      screen:expect({
-        grid = [[
-        {12:~ }^orem ipsum        |
-        {6:~                   }|
-        ]],
-      })
-    else
-      screen:expect({
-        grid = [[
-        {2:~ }^orem ipsum        |
-        {6:~                   }|
-        ]],
-      })
-    end
+    screen:expect({
+      grid = [[
+      {12:~ }^orem ipsum        |
+      {6:~                   }|
+      ]],
+    })
   end)
 
   it('handle #521', function()
@@ -1306,28 +1317,15 @@ describe('gitsigns (with screen)', function()
     feed('dd')
 
     local function check_screen(unchanged)
-      if fn.has('nvim-0.11') > 0 then
-        -- TODO(lewis6991): ???
-        screen:expect({
-          grid = [[
-          {11:^ }^is                |
-          {1:  }a                 |
-          {1:  }file              |
-                              |
-        ]],
-          unchanged = unchanged,
-        })
-      else
-        screen:expect({
-          grid = [[
-          {4:^ }^is                |
-          {1:  }a                 |
-          {1:  }file              |
-          {1:  }used              |
-        ]],
-          unchanged = unchanged,
-        })
-      end
+      screen:expect({
+        grid = [[
+        {11:^ }^is                |
+        {1:  }a                 |
+        {1:  }file              |
+                            |
+      ]],
+        unchanged = unchanged,
+      })
     end
 
     check_screen()
@@ -1516,7 +1514,7 @@ describe('gitsigns attach', function()
     edit('test')
     wait_for_attach()
 
-    command('Gitsigns show')
+    command('Gitsigns show :%')
 
     local show_bufnr --- @type integer?
     expectf(function()
